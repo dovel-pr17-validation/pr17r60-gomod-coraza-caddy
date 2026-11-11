@@ -1,0 +1,52 @@
+name: Nightly Coraza
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/nightly-coraza.yml"
+  schedule:
+    - cron: "0 4 * * *"
+
+permissions: {}
+
+jobs:
+  nightly-coraza:
+    strategy:
+      matrix:
+        go-version: [1.25.x]
+        os: [ubuntu-latest]
+        xcaddy-version: [v0.4.5]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          lfs: true
+          fetch-depth: 0 #for better blame info
+
+      - name: Tests and coverage
+        run: go run mage.go coverage
+
+      - name: Install xcaddy
+        run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@${{ matrix.xcaddy-version }}
+
+      - name: Get last commit of coraza
+        id: coraza-latest-commit
+        run: echo "value=$(gh api repos/corazawaf/coraza/commits/main -q .sha)" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch last coraza version
+        run: go get github.com/corazawaf/coraza/v3@${{ steps.coraza-latest-commit.outputs.value }} && go mod tidy
+
+      - name: Build caddy
+        run: go run mage.go buildCaddyLinux
+
+      - name: Run e2e tests
+        run: go run mage.go e2e
